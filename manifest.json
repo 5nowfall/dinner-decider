@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Dinner Decider: What's for Dinner Tonight?",
   "short_name": "Dinner Decider",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Can't decide what to cook? Get tonight's dinner in one click, then cook along with step-by-step timers.",
   "minimum_chrome_version": "120",
   "action": {
@@ -17,7 +17,12 @@
   "background": {
     "service_worker": "background.js"
   },
-  "permissions": ["storage", "alarms", "notifications"],
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications",
+    "offscreen"
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

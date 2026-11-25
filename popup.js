@@ -29,6 +29,7 @@
   const FRESH_MS = 6 * 3600 * 1000;
   let S = structuredClone(DEFAULTS);
   let timers = [];
+  let done = [];
   const ui = {
     tab: 'tonight', dishId: null, spinning: false, rejected: new Set(), cook: null,
     grocery: false, groceryChecked: new Set(), filtersOpen: false, spinTimer: null
@@ -184,15 +185,50 @@
 
   const mmss = (s) => Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 
+  const DONE_TTL = 30 * 60 * 1000;
+
+  async function dismissDone(id) {
+    done = done.filter((d) => d.id !== id);
+    await chrome.storage.local.set({ done });
+    renderTimers();
+  }
+
   function renderTimers() {
     const ul = $('#tlist');
-    ul.replaceChildren(...timers.map((t) => {
-      const left = Math.max(0, Math.ceil((t.endsAt - Date.now()) / 1000));
+    const now = Date.now();
+    const doneRows = done.filter((d) => now - d.at < DONE_TTL).map((d) =>
+      h('li', { class: 'donerow' },
+        h('span', { class: 'tl', text: '✅ ' + d.label + (d.dish ? ' · ' + d.dish : '') }),
+        h('span', { class: 'tt fin', text: 'Done!' }),
+        h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Dismiss ' + d.label, onclick: () => dismissDone(d.id), text: '✕' })));
+    const running = timers.map((t) => {
+      const left = Math.max(0, Math.ceil((t.endsAt - now) / 1000));
       return h('li', {},
         h('span', { class: 'tl', text: t.label + (t.dish ? ' · ' + t.dish : '') }),
         h('span', { class: 'tt' + (left ? '' : ' fin'), text: left ? mmss(left) : 'Done!' }),
         h('button', { type: 'button', class: 'iconbtn', 'aria-label': 'Cancel timer ' + t.label, onclick: () => cancelTimer(t.id), text: '✕' }));
-    }));
+    });
+    ul.replaceChildren(...doneRows, ...running);
+  }
+
+  async function testAlert() {
+    const btn = $('#testAlert'), msg = $('#testMsg');
+    btn.disabled = true; msg.className = ''; msg.textContent = 'Sending…';
+    try {
+      const r = await chrome.runtime.sendMessage({ type: 'test-alert' });
+      const notifOk = r && r.notification === 'created' && r.permission !== 'denied';
+      const soundOk = r && r.sound === 'ok';
+      if (notifOk && soundOk) {
+        msg.textContent = 'Sent! You should see a notification and hear a beep. No notification? On Mac: System Settings → Notifications → Google Chrome, and turn Focus off.';
+      } else {
+        msg.className = 'bad';
+        msg.textContent = 'Problem: notification ' + (notifOk ? 'ok' : (r ? r.notification + ' (permission: ' + r.permission + ')' : 'no reply')) +
+          ', sound ' + (soundOk ? 'ok' : (r ? r.sound : 'no reply')) + '. Check Chrome and system notification settings.';
+      }
+    } catch (e) {
+      msg.className = 'bad'; msg.textContent = 'Could not reach the background worker: ' + e.message;
+    }
+    btn.disabled = false;
   }
 
   // ───────────────────────── small UI bits ─────────────────────────
@@ -549,11 +585,12 @@
   }
 
   async function boot() {
-    const r = await chrome.storage.local.get(['dd', 'timers']);
+    const r = await chrome.storage.local.get(['dd', 'timers', 'done']);
     const saved = r.dd || {};
     S = { ...structuredClone(DEFAULTS), ...saved };
     S.filters = { ...DEFAULTS.filters, ...(saved.filters || {}) };
     timers = Array.isArray(r.timers) ? r.timers : [];
+    done = Array.isArray(r.done) ? r.done : [];
     if (S.last && Date.now() - S.last.ts < FRESH_MS && byId(S.last.id)) ui.dishId = S.last.id;
     if (S.cook && Date.now() - S.cook.ts < FRESH_MS && byId(S.cook.id)) {
       ui.cook = { id: S.cook.id, done: new Set(S.cook.done), have: new Set(S.cook.have) };
@@ -569,12 +606,14 @@
       startTimer(min * 60, 'Quick timer', '', 'quick');
     });
     chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.timers) {
-        timers = changes.timers.newValue || [];
+      if (area === 'local' && (changes.timers || changes.done)) {
+        if (changes.timers) timers = changes.timers.newValue || [];
+        if (changes.done) done = changes.done.newValue || [];
         renderTimers();
         if (ui.cook) render(true);
       }
     });
+    $('#testAlert').addEventListener('click', testAlert);
     setInterval(renderTimers, 1000);
     renderTimers();
     render();
